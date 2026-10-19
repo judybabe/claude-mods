@@ -11,7 +11,7 @@ Claude Code 的三個自製 mod（外掛）。每個 mod 都只動 Claude Code �
 ## 安裝
 
 ```
-claude plugin marketplace add <GitHub 帳號>/claude-mods
+claude plugin marketplace add judybabe/claude-mods
 claude plugin install usage-band@judy-mods
 claude plugin install edit-guard@judy-mods
 claude plugin install turn-files@judy-mods
