@@ -2,6 +2,12 @@
 
 同時開好幾個 Claude Code 工作階段改同一個專案時，避免互相蓋掉對方的修改。
 
+安裝（Claude Code 2.1.275 以上，一步完成）：
+
+```
+/plugin install edit-guard --marketplace judybabe/claude-mods
+```
+
 - 每次 Write 或 Edit 都記到 `~/.claude/edit-log/<工作階段>.json`。
 - 要改的檔案若在最近 30 分鐘內被**另一個**工作階段改過，先跳出詢問：「對話 XXXX 在 HH:MM 改過 <檔案>，要繼續嗎？」繼續才寫入；取消或關閉對話框都不寫、也不記錄。
 - 自己這個工作階段之前改過的不會問。

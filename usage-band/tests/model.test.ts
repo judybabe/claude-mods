@@ -32,7 +32,7 @@ test('the band leads with the model', async ($, on) => {
   }))
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'usage-band', surface, ...BAND })
-    expect((await ui.find({ type: 'Text', text: 'Opus 5.5' }))).toBeDefined()
+    expect((await ui.find({ key: 'model:claude-opus-5-5' }))?.props.variant).toBe('primary')
     expect(await ui.find({ type: 'Text', text: /Fable/ })).toBeUndefined()
     expect((await ui.find({ type: 'Text', text: /^本週 / }))?.text).toBe('本週 40%')
     await ui.unmount()

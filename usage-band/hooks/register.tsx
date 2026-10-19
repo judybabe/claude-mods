@@ -4,7 +4,8 @@ import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 import type { Reading } from '../types'
 import { cacheCell, shouldWarn } from './cache'
 import { HANDOFF_REQUEST, firstMessage, handoffPath, shouldOffer } from './handoff'
-import { modelName } from './model'
+import { gauge, tone } from './gauge'
+import { bareId, modelOptions } from './model'
 
 const reading = atom({ plugin: 'usage-band', key: 'reading' } as const, null)
 const lastSent = atom({ plugin: 'usage-band', key: 'lastSent' } as const, null)
@@ -14,8 +15,6 @@ const handoff = atom({ plugin: 'usage-band', key: 'handoff' } as const, null)
 const model = atom({ plugin: 'usage-band', key: 'model' } as const, null)
 
 const TICK_MS = 30 * 1000
-
-const RED_AT = 80
 
 function toReading(usage: SessionUsage): Reading {
   const fiveHour = usage.rateLimits.find(r => r.kind === 'five_hour')
@@ -125,32 +124,75 @@ export const register: Register = on => {
     const files = await filesPane($)
     const { Box, Button, Text } = $.ui.resolve(e)
     const reset = clock(figures.fiveHourResetsAt)
-    const tone = (value: number | undefined) =>
-      value !== undefined && value > RED_AT ? 'error' : undefined
 
-    // the band is one site shared by every mod: this line on top, whatever the mods below draw under it
+    const metric = (label: string, value: number | undefined, suffix = '') => {
+      const colour = tone(value)
+      return (
+        <Box gap={1}>
+          <Text color={colour} dimColor={colour === undefined}>{gauge(value)}</Text>
+          <Text color={colour} dimColor={colour === undefined} bold={colour === 'error'}>
+            {label} {pct(value)}{suffix}
+          </Text>
+        </Box>
+      )
+    }
+    const bar = <Text dimColor> │ </Text>
+
+    // the band is one site shared by every mod: these rows on top, whatever the mods below draw under them
     const below = await next(e)
     return (
       <Box flexDirection="column">
+        <Box gap={2}>
+          <Text dimColor>目前模型</Text>
+          <Box gap={1}>
+            {modelOptions(modelId).map(option => {
+              const isCurrent = modelId !== undefined && option.value === bareId(modelId)
+              return isCurrent ? (
+                <Button key={`model:${option.value}`} label={option.label} variant="primary" onPress={() => undefined} />
+              ) : (
+                <Button
+                  key={`model:${option.value}`}
+                  label={option.label}
+                  plain
+                  dimColor
+                  onPress={() => {
+                    // the engine may keep the model (one the plan lacks): the highlight follows what it settled on
+                    void (async () => {
+                      await $.command.run({ command: 'model', args: option.value }).catch(() => undefined)
+                      const settled = await currentModel($)
+                      if (settled !== undefined) await update($, model, () => settled)
+                    })()
+                  }}
+                />
+              )
+            })}
+          </Box>
+          {handingOff ? (
+            <Text color="warning">交接中…</Text>
+          ) : shouldOffer(figures.context) ? (
+            <Button
+              key="handoff"
+              label="交接"
+              variant="primary"
+              onPress={async () => {
+                await update($, handoff, () => 'writing')
+                await $.prompt.submit({ text: HANDOFF_REQUEST, asUser: true })
+              }}
+            />
+          ) : null}
+        </Box>
         <Box>
-          <Text bold>{modelName(modelId)}</Text>
-          <Text dimColor> · </Text>
-          <Text color={tone(figures.context)} dimColor={tone(figures.context) === undefined}>
-            context {pct(figures.context)}
-          </Text>
-          <Text dimColor> · </Text>
-          <Text color={tone(figures.fiveHour)} dimColor={tone(figures.fiveHour) === undefined}>
-            5h {pct(figures.fiveHour)}{reset ? `（${reset} 重置）` : ''}
-          </Text>
-          <Text dimColor> · </Text>
-          <Text color={tone(figures.sevenDay)} dimColor={tone(figures.sevenDay) === undefined}>
-            本週 {pct(figures.sevenDay)}
-          </Text>
-          <Text dimColor> · </Text>
+          {metric('context', figures.context)}
+          {bar}
+          {metric('5h', figures.fiveHour, reset ? ` ↻${reset}` : '')}
+          {bar}
+          {metric('本週', figures.sevenDay)}
+          {bar}
+          <Text dimColor>◷ </Text>
           <Text color={cache.isExpired ? 'error' : undefined} dimColor={!cache.isExpired}>
             {cache.text}
           </Text>
-          <Text dimColor> · </Text>
+          {bar}
           <Button
             key="files"
             label={`檔案 ${files.isOpen ? '▾' : '▸'}${files.count > 0 ? ` ${files.count}` : ''}`}
@@ -159,21 +201,6 @@ export const register: Register = on => {
               void $.command.run({ command: 'turn-files' })
             }}
           />
-          {handingOff ? (
-            <Text color="warning"> · 交接中…</Text>
-          ) : shouldOffer(figures.context) ? (
-            <Box>
-              <Text dimColor> · </Text>
-              <Button
-                key="handoff"
-                label="交接"
-                onPress={async () => {
-                  await update($, handoff, () => 'writing')
-                  await $.prompt.submit({ text: HANDOFF_REQUEST, asUser: true })
-                }}
-              />
-            </Box>
-          ) : null}
         </Box>
         {below}
       </Box>
