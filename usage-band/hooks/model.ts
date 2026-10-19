@@ -1,9 +1,9 @@
 export type ModelOption = { value: string; label: string }
 
+// the models this account has run; one the picker lacks still shows first while it is current
 export const MODELS: readonly ModelOption[] = [
   { value: 'claude-fable-5-1', label: 'Fable 5.1' },
   { value: 'claude-opus-5-5', label: 'Opus 5.5' },
-  { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
   { value: 'claude-haiku-5-5', label: 'Haiku 5.5' },
 ]
 
