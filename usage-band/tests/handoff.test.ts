@@ -24,7 +24,7 @@ test('offers from 70% up', async () => {
 
 test('names the file after the project and the minute', async () => {
   const at = new Date(2026, 9, 13, 9, 5)
-  expect(handoffPath('/home/judy', '/home/judy/multi-agent', at)).toBe('/home/judy/.claude/handoffs/multi-agent-20261013-0905.md')
+  expect(handoffPath('/home/u', '/home/u/multi-agent', at)).toBe('/home/u/.claude/handoffs/multi-agent-20261013-0905.md')
   expect(firstMessage('/x.md', `\n${SUMMARY}\n`)).toBe(`以下是上一段對話的交接摘要（檔案：/x.md），請讀完後接續工作。\n\n${SUMMARY}`)
 })
 
@@ -49,8 +49,8 @@ test('press writes, saves, clears, then opens with the summary', async ($, on) =
   on('prompt.submit', ($, e) => { submitted.push(e.text); return { text: e.text } })
   on('fs.write', ($, e) => { written.push([e.path, e.text]); return { value: undefined } as never })
   on('command.run', ($, e) => { commands.push(e.command); return { value: { text: '' } } as never })
-  on('env.get', () => ({ value: '/home/judy' }))
-  on('session.cwd', () => ({ value: '/home/judy/multi-agent' }))
+  on('env.get', () => ({ value: '/home/u' }))
+  on('session.cwd', () => ({ value: '/home/u/multi-agent' }))
 
   const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...BAND })
   await ui.press({ key: 'handoff' })
@@ -61,7 +61,7 @@ test('press writes, saves, clears, then opens with the summary', async ($, on) =
   await $.turn.complete({ turnId: 't1', answer: SUMMARY, reason: 'answer', isAborted: false, durationMs: 1 })
   await clock.settle()
 
-  const path = '/home/judy/.claude/handoffs/multi-agent-20261013-0905.md'
+  const path = '/home/u/.claude/handoffs/multi-agent-20261013-0905.md'
   expect(written).toEqual([[path, `${SUMMARY}\n`]])
   expect(commands).toEqual(['clear'])
   expect(submitted[1]).toBe(firstMessage(path, SUMMARY))

@@ -5,8 +5,8 @@ import { WINDOW_MS, absolute, fresh, latestOther, question } from '../hooks/guar
 const AT = Date.UTC(2026, 9, 13, 5, 52)
 
 test('paths resolve against the working directory', async () => {
-  expect(absolute('src/a.ts', '/home/judy/p')).toBe('/home/judy/p/src/a.ts')
-  expect(absolute('../b.ts', '/home/judy/p')).toBe('/home/judy/b.ts')
+  expect(absolute('src/a.ts', '/home/u/p')).toBe('/home/u/p/src/a.ts')
+  expect(absolute('../b.ts', '/home/u/p')).toBe('/home/u/b.ts')
   expect(absolute('/x/./y//z.ts', '/ignored')).toBe('/x/y/z.ts')
 })
 
@@ -22,6 +22,6 @@ test('only the last thirty minutes count', async () => {
 })
 
 test('the question names the session, Taiwan time and the file', async () => {
-  expect(question({ session: 'abcdef1234567890', file: '/home/judy/x.ts', at: AT }))
-    .toBe('對話 abcdef12 在 13:52 改過 /home/judy/x.ts，要繼續嗎？')
+  expect(question({ session: 'abcdef1234567890', file: '/home/u/x.ts', at: AT }))
+    .toBe('對話 abcdef12 在 13:52 改過 /home/u/x.ts，要繼續嗎？')
 })

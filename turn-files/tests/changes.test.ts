@@ -10,9 +10,9 @@ test('hunks become a unified diff with its counts', async () => {
 })
 
 test('paths read relative to the folder, then to home', async () => {
-  expect(displayPath('/home/judy/p/src/a.ts', '/home/judy/p', '/home/judy')).toBe('src/a.ts')
-  expect(displayPath('/home/judy/.claude/x.json', '/home/judy/p', '/home/judy')).toBe('~/.claude/x.json')
-  expect(displayPath('/etc/hosts', '/home/judy/p', '/home/judy')).toBe('/etc/hosts')
+  expect(displayPath('/home/u/p/src/a.ts', '/home/u/p', '/home/u')).toBe('src/a.ts')
+  expect(displayPath('/home/u/.claude/x.json', '/home/u/p', '/home/u')).toBe('~/.claude/x.json')
+  expect(displayPath('/etc/hosts', '/home/u/p', '/home/u')).toBe('/etc/hosts')
 })
 
 test('a second edit of the same file joins the first', async () => {

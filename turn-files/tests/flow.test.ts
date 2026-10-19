@@ -18,9 +18,9 @@ const PANE = {
 const world = (on: On, summary: string | undefined) => {
   const prompts: string[] = []
   const opened: string[] = []
-  on('session.cwd', () => ({ value: '/home/judy/p' }) as never)
-  on('env.get', () => ({ value: '/home/judy' }) as never)
-  on('fs.exists', ($, e) => ({ value: e.path !== '/home/judy/p/new.ts' }) as never)
+  on('session.cwd', () => ({ value: '/home/u/p' }) as never)
+  on('env.get', () => ({ value: '/home/u' }) as never)
+  on('fs.exists', ($, e) => ({ value: e.path !== '/home/u/p/new.ts' }) as never)
   on('session.messages', () => ({
     value: [
       { role: 'user', text: '幫我改', toolUses: [] },
@@ -62,9 +62,9 @@ const turn = async ($: Engine, run: () => Promise<unknown>) => {
 test('the turn’s files list, open one for its diff, why and summary', async ($, on) => {
   const w = world(on, '交接門檻從 0 改回 70，按鈕只在 context 達 70% 時出現。')
   await turn($, async () => {
-    await $.tool.call({ tool: 'Edit', file_path: '/home/judy/p/hooks/handoff.ts', old_string: '0', new_string: '70' })
-    await $.tool.call({ tool: 'Write', file_path: '/home/judy/p/new.ts', content: 'x' })
-    await $.tool.call({ tool: 'Edit', file_path: '/home/judy/p/locked.ts', old_string: 'a', new_string: 'b' })
+    await $.tool.call({ tool: 'Edit', file_path: '/home/u/p/hooks/handoff.ts', old_string: '0', new_string: '70' })
+    await $.tool.call({ tool: 'Write', file_path: '/home/u/p/new.ts', content: 'x' })
+    await $.tool.call({ tool: 'Edit', file_path: '/home/u/p/locked.ts', old_string: 'a', new_string: 'b' })
   })
   expect(w.opened).toEqual(['turn-files'])
 
@@ -90,7 +90,7 @@ test('the turn’s files list, open one for its diff, why and summary', async ($
 
 test('a failed summary offers a retry', async ($, on) => {
   const w = world(on, undefined)
-  await turn($, () => $.tool.call({ tool: 'Edit', file_path: '/home/judy/p/a.ts', old_string: '0', new_string: '70' }))
+  await turn($, () => $.tool.call({ tool: 'Edit', file_path: '/home/u/p/a.ts', old_string: '0', new_string: '70' }))
   const ui = await $.ui.mount({ plugin: 'turn-files', surface: 'terminal', ...PANE })
   await ui.press({ key: 'file-0' })
   expect((await ui.find({ type: 'Text', text: /摘要產生失敗/ }))).toBeDefined()
@@ -101,7 +101,7 @@ test('a failed summary offers a retry', async ($, on) => {
 
 test('a turn that writes nothing keeps the last list and opens nothing', async ($, on) => {
   const w = world(on, '摘要')
-  await turn($, () => $.tool.call({ tool: 'Edit', file_path: '/home/judy/p/a.ts', old_string: '0', new_string: '70' }))
+  await turn($, () => $.tool.call({ tool: 'Edit', file_path: '/home/u/p/a.ts', old_string: '0', new_string: '70' }))
   await turn($, async () => {})
   expect(w.opened).toEqual(['turn-files'])
   const ui = await $.ui.mount({ plugin: 'turn-files', surface: 'terminal', ...PANE })
