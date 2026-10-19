@@ -1,0 +1,9 @@
+{
+  "name": "usage-band",
+  "version": "0.1.0",
+  "description": "輸入框上方細帶：context、五小時（含重置時間）與本週額度、快取倒數；context 七成以上出現交接按鈕",
+  "author": {
+    "name": "Judy"
+  },
+  "types": "./types/index.d.ts"
+}

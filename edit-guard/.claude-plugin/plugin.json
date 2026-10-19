@@ -1,0 +1,6 @@
+{
+  "name": "edit-guard",
+  "version": "0.1.0",
+  "description": "Records every file Write/Edit across sessions and asks before touching a file another session changed in the last 30 minutes.",
+  "author": { "name": "Judy" }
+}

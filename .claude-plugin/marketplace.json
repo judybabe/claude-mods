@@ -1,0 +1,21 @@
+{
+  "name": "judy-mods",
+  "description": "Judy 自己的 Claude Code mods",
+  "owner": {
+    "name": "Judy"
+  },
+  "plugins": [
+    {
+      "name": "usage-band",
+      "source": "./usage-band"
+    },
+    {
+      "name": "edit-guard",
+      "source": "./edit-guard"
+    },
+    {
+      "name": "turn-files",
+      "source": "./turn-files"
+    }
+  ]
+}

@@ -1,0 +1,182 @@
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, Register, SessionUsage } from 'claude-code'
+
+import type { Reading } from '../types'
+import { cacheCell, shouldWarn } from './cache'
+import { HANDOFF_REQUEST, firstMessage, handoffPath, shouldOffer } from './handoff'
+import { modelName } from './model'
+
+const reading = atom({ plugin: 'usage-band', key: 'reading' } as const, null)
+const lastSent = atom({ plugin: 'usage-band', key: 'lastSent' } as const, null)
+const warnedFor = atom({ plugin: 'usage-band', key: 'warnedFor' } as const, null)
+const now = atom({ plugin: 'usage-band', key: 'now' } as const, 0)
+const handoff = atom({ plugin: 'usage-band', key: 'handoff' } as const, null)
+const model = atom({ plugin: 'usage-band', key: 'model' } as const, null)
+
+const TICK_MS = 30 * 1000
+
+const RED_AT = 80
+
+function toReading(usage: SessionUsage): Reading {
+  const fiveHour = usage.rateLimits.find(r => r.kind === 'five_hour')
+  const sevenDay = usage.rateLimits.find(r => r.kind === 'seven_day')
+  return {
+    context: usage.context.percent,
+    fiveHour: fiveHour?.percentUsed,
+    fiveHourResetsAt: fiveHour?.resetsAt,
+    sevenDay: sevenDay?.percentUsed,
+  }
+}
+
+async function currentModel($: EngineInterface): Promise<string | undefined> {
+  return $.session.model().catch(() => undefined)
+}
+
+const FILES_OPEN = { plugin: 'turn-files', key: 'open' } as const
+const FILES_SHOWN = { plugin: 'turn-files', key: 'shown' } as const
+
+async function filesPane($: EngineInterface): Promise<{ isOpen: boolean; count: number }> {
+  const opened = (await $.state.get(FILES_OPEN as never).catch(() => undefined)) as { value?: unknown } | undefined
+  const shown = (await $.state.get(FILES_SHOWN as never).catch(() => undefined)) as { value?: unknown } | undefined
+  return { isOpen: opened?.value === true, count: Array.isArray(shown?.value) ? shown.value.length : 0 }
+}
+
+function clock(iso: string | undefined): string | undefined {
+  if (!iso) return undefined
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return undefined
+  const hh = String(at.getHours()).padStart(2, '0')
+  const mm = String(at.getMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+
+function pct(value: number | undefined): string {
+  return value === undefined ? '—' : `${Math.round(value)}%`
+}
+
+export const register: Register = on => {
+  on('session.start', async ($, e, next) => {
+    const result = await next(e)
+    const startedAt = await $.clock.now()
+    const current = await currentModel($)
+    if (current !== undefined) await update($, model, () => current)
+    await update($, now, () => startedAt)
+    $.clock.every(TICK_MS, async () => {
+      const at = await $.clock.now()
+      await update($, now, () => at)
+      const sent = await read($, lastSent)
+      if (shouldWarn(sent, at, await read($, warnedFor))) {
+        await update($, warnedFor, () => sent)
+        $.ui.toast('快取剩 5 分鐘就過期', { timeoutMs: 10000 })
+      }
+    })
+    return result
+  })
+
+  on('turn.step', async function* ($, e, next) {
+    if (e.agentId === undefined) {
+      const at = await $.clock.now()
+      await update($, lastSent, () => at)
+      await update($, now, () => at)
+    }
+    return yield* next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    if (e.agentId !== undefined) return result
+
+    const latest = toReading(await $.session.usage())
+    await update($, reading, () => latest)
+    const current = await currentModel($)
+    if (current !== undefined) await update($, model, () => current)
+
+    if ((await read($, handoff)) === 'writing') {
+      await update($, handoff, () => null)
+      if (e.reason !== 'answer' || e.answer.trim() === '') {
+        $.ui.toast('交接摘要沒寫完，對話沒有清空', { timeoutMs: 10000 })
+        return result
+      }
+      const home = (await $.env.get('HOME')) ?? '/tmp'
+      const path = handoffPath(home, await $.session.cwd(), new Date(await $.clock.now()))
+      await $.fs.write(path, e.answer.trim() + '\n')
+      const opening = firstMessage(path, e.answer)
+      $.clock.after(0, async () => {
+        await $.command.run({ command: 'clear' })
+        await $.prompt.submit({ text: opening, asUser: true })
+      })
+    }
+    return result
+  })
+
+  on('classic.PostModelSwitch', async ($, e, next) => {
+    const result = await next(e)
+    await update($, model, () => e.to_model)
+    return result
+  }).catch(($, e, next) => next(e))
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+
+    const figures = (await read($, reading)) ?? toReading(await $.session.usage())
+    const cache = cacheCell(await read($, lastSent), await read($, now))
+    const handingOff = (await read($, handoff)) === 'writing'
+    const modelId = (await read($, model)) ?? (await currentModel($))
+    const files = await filesPane($)
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const reset = clock(figures.fiveHourResetsAt)
+    const tone = (value: number | undefined) =>
+      value !== undefined && value > RED_AT ? 'error' : undefined
+
+    // the band is one site shared by every mod: this line on top, whatever the mods below draw under it
+    const below = await next(e)
+    return (
+      <Box flexDirection="column">
+        <Box>
+          <Text bold>{modelName(modelId)}</Text>
+          <Text dimColor> · </Text>
+          <Text color={tone(figures.context)} dimColor={tone(figures.context) === undefined}>
+            context {pct(figures.context)}
+          </Text>
+          <Text dimColor> · </Text>
+          <Text color={tone(figures.fiveHour)} dimColor={tone(figures.fiveHour) === undefined}>
+            5h {pct(figures.fiveHour)}{reset ? `（${reset} 重置）` : ''}
+          </Text>
+          <Text dimColor> · </Text>
+          <Text color={tone(figures.sevenDay)} dimColor={tone(figures.sevenDay) === undefined}>
+            本週 {pct(figures.sevenDay)}
+          </Text>
+          <Text dimColor> · </Text>
+          <Text color={cache.isExpired ? 'error' : undefined} dimColor={!cache.isExpired}>
+            {cache.text}
+          </Text>
+          <Text dimColor> · </Text>
+          <Button
+            key="files"
+            label={`檔案 ${files.isOpen ? '▾' : '▸'}${files.count > 0 ? ` ${files.count}` : ''}`}
+            onPress={() => {
+              // not awaited: the toggle answers through turn-files' own state, and a press has a short budget
+              void $.command.run({ command: 'turn-files' })
+            }}
+          />
+          {handingOff ? (
+            <Text color="warning"> · 交接中…</Text>
+          ) : shouldOffer(figures.context) ? (
+            <Box>
+              <Text dimColor> · </Text>
+              <Button
+                key="handoff"
+                label="交接"
+                onPress={async () => {
+                  await update($, handoff, () => 'writing')
+                  await $.prompt.submit({ text: HANDOFF_REQUEST, asUser: true })
+                }}
+              />
+            </Box>
+          ) : null}
+        </Box>
+        {below}
+      </Box>
+    )
+  })
+}
