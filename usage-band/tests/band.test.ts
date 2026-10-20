@@ -86,7 +86,7 @@ test('without turn-files the toggle still draws, closed and uncounted', async ($
   await ui.unmount()
 })
 
-test('the model row is titled, highlights the current model and switches on a press', async ($, on) => {
+test('the model row is a collapsed picker: open it, pick another, it switches and closes', async ($, on) => {
   on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: '' })) // the mods below the band draw nothing
   const ran: { command: string; args: string }[] = []
   let engineModel = 'claude-fable-5-1[1m]'
@@ -99,24 +99,27 @@ test('the model row is titled, highlights the current model and switches on a pr
   })
   const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...BAND })
   expect(await ui.find({ type: 'Text', text: '目前模型' })).toBeDefined()
-  const current = await ui.find({ key: 'model:claude-fable-5-1' })
-  expect(current?.props.label).toBe('Fable 5.1')
-  expect(current?.props.variant).toBe('primary')
-  expect(current?.props.plain).toBeUndefined()
-  const other = await ui.find({ key: 'model:claude-haiku-5-5' })
-  expect(other?.props.label).toBe('Haiku 5.5')
-  expect(other?.props.plain).toBe(true)
-  expect((await ui.findAll({ type: 'Button' })).filter(b => String(b.key).startsWith('model:')).map(b => b.props.label)).toEqual(['Fable 5.1', 'Opus 5.5', 'Haiku 5.5'])
-  await ui.press({ key: 'model:claude-fable-5-1' })
-  expect(ran).toEqual([])
+  expect((await ui.find({ key: 'model' }))?.props.label).toBe('Fable 5.1 ▾')
+  expect(await ui.find({ key: 'model:claude-opus-5-5' })).toBeUndefined()
+
+  await ui.press({ key: 'model' })
+  expect((await ui.find({ key: 'model' }))?.props.label).toBe('Fable 5.1 ▴')
+  const shown = (await ui.findAll({ type: 'Button' })).filter(b => String(b.key).startsWith('model:')).map(b => b.props.label)
+  expect(shown).toEqual(['Opus 5.5', 'Haiku 5.5'])
+
+  await ui.press({ key: 'model' })
+  expect(await ui.find({ key: 'model:claude-opus-5-5' })).toBeUndefined()
+
+  await ui.press({ key: 'model' })
   await ui.press({ key: 'model:claude-haiku-5-5' })
   expect(ran).toEqual([{ command: 'model', args: 'claude-haiku-5-5' }])
-  expect((await ui.find({ key: 'model:claude-haiku-5-5' }))?.props.variant).toBe('primary')
-  expect((await ui.find({ key: 'model:claude-fable-5-1' }))?.props.plain).toBe(true)
+  expect((await ui.find({ key: 'model' }))?.props.label).toBe('Haiku 5.5 ▾')
+  expect(await ui.find({ key: 'model:claude-opus-5-5' })).toBeUndefined()
+
+  await ui.press({ key: 'model' })
   await ui.press({ key: 'model:claude-opus-5-5' })
   expect(ran.at(-1)).toEqual({ command: 'model', args: 'claude-opus-5-5' })
-  expect((await ui.find({ key: 'model:claude-haiku-5-5' }))?.props.variant).toBe('primary') // kept: the highlight stays put
-  expect((await ui.find({ key: 'model:claude-opus-5-5' }))?.props.plain).toBe(true)
+  expect((await ui.find({ key: 'model' }))?.props.label).toBe('Haiku 5.5 ▾') // kept: the label stays put
   await ui.unmount()
 })
 
@@ -125,8 +128,9 @@ test('a model outside the family is offered first so the picker never lies', asy
   on('session.usage', () => ({ value: usage(10, 10, 10) }))
   on('session.model', () => ({ value: 'glm53' }) as never)
   const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...BAND })
+  expect((await ui.find({ key: 'model' }))?.props.label).toBe('glm53 ▾')
+  await ui.press({ key: 'model' })
   const row = (await ui.findAll({ type: 'Button' })).filter(b => String(b.key).startsWith('model:'))
-  expect(row.map(b => b.props.label)).toEqual(['glm53', 'Fable 5.1', 'Opus 5.5', 'Haiku 5.5'])
-  expect(row[0]?.props.variant).toBe('primary')
+  expect(row.map(b => b.props.label)).toEqual(['Fable 5.1', 'Opus 5.5', 'Haiku 5.5'])
   await ui.unmount()
 })

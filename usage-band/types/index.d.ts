@@ -14,6 +14,7 @@ declare module 'claude-code' {
       now: number
       handoff: 'writing' | null
       model: string | null
+      picker: boolean
     }
   }
 }

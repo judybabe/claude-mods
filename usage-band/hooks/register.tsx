@@ -13,6 +13,7 @@ const warnedFor = atom({ plugin: 'usage-band', key: 'warnedFor' } as const, null
 const now = atom({ plugin: 'usage-band', key: 'now' } as const, 0)
 const handoff = atom({ plugin: 'usage-band', key: 'handoff' } as const, null)
 const model = atom({ plugin: 'usage-band', key: 'model' } as const, null)
+const picker = atom({ plugin: 'usage-band', key: 'picker' } as const, false)
 
 const TICK_MS = 30 * 1000
 
@@ -124,6 +125,10 @@ export const register: Register = on => {
     const files = await filesPane($)
     const { Box, Button, Text } = $.ui.resolve(e)
     const reset = clock(figures.fiveHourResetsAt)
+    const isOpen = await read($, picker)
+    const options = modelOptions(modelId)
+    const current = options.find(option => modelId !== undefined && option.value === bareId(modelId)) ?? { value: '', label: '—' }
+    const others = options.filter(option => option !== current)
 
     const metric = (label: string, value: number | undefined, suffix = '') => {
       const colour = tone(value)
@@ -145,27 +150,29 @@ export const register: Register = on => {
         <Box gap={2}>
           <Text dimColor>目前模型</Text>
           <Box gap={1}>
-            {modelOptions(modelId).map(option => {
-              const isCurrent = modelId !== undefined && option.value === bareId(modelId)
-              return isCurrent ? (
-                <Button key={`model:${option.value}`} label={option.label} variant="primary" onPress={() => undefined} />
-              ) : (
-                <Button
-                  key={`model:${option.value}`}
-                  label={option.label}
-                  plain
-                  dimColor
-                  onPress={() => {
-                    // the engine may keep the model (one the plan lacks): the highlight follows what it settled on
-                    void (async () => {
-                      await $.command.run({ command: 'model', args: option.value }).catch(() => undefined)
-                      const settled = await currentModel($)
-                      if (settled !== undefined) await update($, model, () => settled)
-                    })()
-                  }}
-                />
-              )
-            })}
+            <Button
+              key="model"
+              label={`${current.label} ${isOpen ? '▴' : '▾'}`}
+              variant="primary"
+              onPress={() => void update($, picker, was => !was)}
+            />
+            {isOpen
+              ? others.map(option => (
+                  <Button
+                    key={`model:${option.value}`}
+                    label={option.label}
+                    onPress={() => {
+                      // the engine may keep the model (one the plan lacks): the highlight follows what it settled on
+                      void (async () => {
+                        await update($, picker, () => false)
+                        await $.command.run({ command: 'model', args: option.value }).catch(() => undefined)
+                        const settled = await currentModel($)
+                        if (settled !== undefined) await update($, model, () => settled)
+                      })()
+                    }}
+                  />
+                ))
+              : null}
           </Box>
           {handingOff ? (
             <Text color="warning">交接中…</Text>
