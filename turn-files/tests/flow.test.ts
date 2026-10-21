@@ -128,3 +128,38 @@ test('/turn-files opens the pane, runs again to close it, and tracks the open st
   expect(closed).toEqual(['turn-files'])
   expect(opens.at(-1)).toBe(false)
 })
+
+test('a pane kept waiting by a narrow terminal still counts as open: the next run closes it', async ($, on) => {
+  const panes: string[] = []
+  const closed: string[] = []
+  on('ui.open', ($, e) => { panes.push(e.id); return { value: { isPlaced: false, reason: 'the terminal is too narrow' } } as never })
+  on('ui.close', ($, e) => { closed.push(e.id); panes.splice(0, panes.length, ...panes.filter(id => id !== e.id)); return { value: undefined } as never })
+  on('ui.panes', () => ({ value: panes.map(id => ({ id, title: id, isShown: false, isFocused: false, isPlaced: false })) }) as never)
+  const opens: unknown[] = []
+  on('state.set', ($, e, next) => {
+    if (e.key === 'open') opens.push(e.value)
+    return next(e)
+  })
+  const run = () => $.command.run({ command: 'turn-files', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false } } as never)
+  const first = await run()
+  expect(first?.text).toMatch(/^已打開；終端機太窄/)
+  expect(opens.at(-1)).toBe(true)
+  const second = await run()
+  expect(second?.text).toBe('已收合')
+  expect(closed).toEqual(['turn-files'])
+  expect(panes).toEqual([])
+  expect(opens.at(-1)).toBe(false)
+})
+
+test('a pane gone from the engine’s list reads as closed, so the next run opens it again', async ($, on) => {
+  const panes: string[] = []
+  on('ui.open', ($, e) => { panes.push(e.id); return { value: { isPlaced: true } } as never })
+  on('ui.close', ($, e) => { panes.splice(0, panes.length, ...panes.filter(id => id !== e.id)); return { value: undefined } as never })
+  on('ui.panes', () => ({ value: panes.map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })) }) as never)
+  const run = () => $.command.run({ command: 'turn-files', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false } } as never)
+  await run()
+  panes.splice(0) // the person closed it from the engine's mark: the engine's list no longer has it
+  const again = await run()
+  expect(again?.text).toBe('已打開')
+  expect(panes).toEqual(['turn-files'])
+})

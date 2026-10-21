@@ -14,11 +14,14 @@ const selected = atom({ plugin: 'turn-files', key: 'selected' } as const, null)
 const summaries = atom({ plugin: 'turn-files', key: 'summaries' } as const, {})
 const open = atom({ plugin: 'turn-files', key: 'open' } as const, false)
 
+// the pane counts as open from the request on: a narrow terminal keeps it waiting, undrawn, but it is there
 async function openPane($: EngineInterface) {
   const opened = await $.ui.open({ id: PANE, title: TITLE })
-  await update($, open, () => opened.isPlaced)
+  await update($, open, () => true)
   return opened
 }
+
+const isUp = async ($: EngineInterface) => (await $.ui.panes().catch(() => [])).some(pane => pane.id === PANE)
 
 async function why($: EngineInterface, agentId: string | undefined): Promise<string[]> {
   const found = await (agentId === undefined ? $.session.messages() : $.session.messages({ agentId })).catch(() => [])
@@ -49,13 +52,13 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'turn-files' }, async $ => {
-    if (await read($, open)) {
+    if (await isUp($)) {
       await $.ui.close({ id: PANE })
       await update($, open, () => false)
       return { text: '已收合' }
     }
     const opened = await openPane($)
-    return { text: opened.isPlaced ? '已打開' : '終端機太窄，面板等待顯示中' }
+    return { text: opened.isPlaced ? '已打開' : '已打開；終端機太窄先等著，拉寬就會顯示（再輸入一次即收合）' }
   })
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
