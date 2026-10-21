@@ -99,11 +99,10 @@ export const register: Register = on => {
     if (e.agentId !== undefined) return result
     const changed = await read($, current)
     if (changed.length === 0) return result
+    // the pane never opens itself: one already open redraws with the new list, otherwise the band's count says how many
     await update($, shown, () => changed)
     await update($, selected, () => null)
     await update($, summaries, () => ({}))
-    const opened = await openPane($)
-    if (!opened.isPlaced) $.ui.toast(`這一輪改了 ${changed.length} 個檔案，輸入 /turn-files 查看`, { timeoutMs: 8000 })
     return result
   })
 

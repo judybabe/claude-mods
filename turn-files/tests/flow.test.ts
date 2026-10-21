@@ -66,7 +66,7 @@ test('the turn’s files list, open one for its diff, why and summary', async ($
     await $.tool.call({ tool: 'Write', file_path: '/home/u/p/new.ts', content: 'x' })
     await $.tool.call({ tool: 'Edit', file_path: '/home/u/p/locked.ts', old_string: 'a', new_string: 'b' })
   })
-  expect(w.opened).toEqual(['turn-files'])
+  expect(w.opened).toEqual([]) // the pane never opens itself
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'turn-files', surface, ...PANE })
@@ -99,11 +99,11 @@ test('a failed summary offers a retry', async ($, on) => {
   await ui.unmount()
 })
 
-test('a turn that writes nothing keeps the last list and opens nothing', async ($, on) => {
+test('a turn that writes nothing keeps the last list; no turn opens the pane', async ($, on) => {
   const w = world(on, '摘要')
   await turn($, () => $.tool.call({ tool: 'Edit', file_path: '/home/u/p/a.ts', old_string: '0', new_string: '70' }))
   await turn($, async () => {})
-  expect(w.opened).toEqual(['turn-files'])
+  expect(w.opened).toEqual([])
   const ui = await $.ui.mount({ plugin: 'turn-files', surface: 'terminal', ...PANE })
   expect((await ui.find({ type: 'Text', text: /^這一輪改了/ }))?.text).toBe('這一輪改了 1 個檔案')
   await ui.unmount()
