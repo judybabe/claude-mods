@@ -3,7 +3,10 @@ export type Reading = {
   fiveHour?: number
   fiveHourResetsAt?: string
   sevenDay?: number
+  sevenDayResetsAt?: string
 }
+
+export type RefreshState = 'idle' | 'busy' | 'done' | 'failed'
 
 declare module 'claude-code' {
   interface PluginState {
@@ -15,6 +18,8 @@ declare module 'claude-code' {
       handoff: 'writing' | null
       model: string | null
       picker: boolean
+      refreshedAt: number | null
+      refreshState: RefreshState
     }
   }
 }

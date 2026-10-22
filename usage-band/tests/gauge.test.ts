@@ -1,22 +1,28 @@
 import { expect, test } from 'claude-code/testing'
 
-import { gauge, tone } from '../hooks/gauge'
+import { bar, colour, level } from '../hooks/gauge'
 
-test('five cells, any use lights the first, full at 100', () => {
-  expect(gauge(undefined)).toBe('▱▱▱▱▱')
-  expect(gauge(0)).toBe('▱▱▱▱▱')
-  expect(gauge(4)).toBe('▰▱▱▱▱')
-  expect(gauge(18)).toBe('▰▱▱▱▱')
-  expect(gauge(62)).toBe('▰▰▰▰▱')
-  expect(gauge(100)).toBe('▰▰▰▰▰')
-  expect(gauge(130)).toBe('▰▰▰▰▰')
+test('eight cells drawn to the eighth, as the spec’s samples', () => {
+  expect(bar(32)).toEqual({ filled: '██▌', track: '█████' })
+  expect(bar(11)).toEqual({ filled: '▉', track: '███████' })
+  expect(bar(35)).toEqual({ filled: '██▊', track: '█████' })
+  expect(bar(42)).toEqual({ filled: '███▍', track: '████' })
+  expect(bar(72)).toEqual({ filled: '█████▊', track: '██' })
+  expect(bar(93)).toEqual({ filled: '███████▌', track: '' })
+  expect(bar(100)).toEqual({ filled: '████████', track: '' })
+  expect(bar(0)).toEqual({ filled: '', track: '████████' })
+  expect(bar(undefined)).toEqual({ filled: '', track: '████████' })
 })
 
-test('green under 50, amber from 50 to 80, red past 80, none without a figure', () => {
-  expect(tone(undefined)).toBeUndefined()
-  expect(tone(0)).toBe('success')
-  expect(tone(49)).toBe('success')
-  expect(tone(50)).toBe('warning')
-  expect(tone(80)).toBe('warning')
-  expect(tone(81)).toBe('error')
+test('ok under 60, warn from 60, danger from 85, none without a figure', () => {
+  expect(level(undefined)).toBe('none')
+  expect(level(0)).toBe('ok')
+  expect(level(59)).toBe('ok')
+  expect(level(60)).toBe('warn')
+  expect(level(84)).toBe('warn')
+  expect(level(85)).toBe('danger')
+  expect(colour('none')).toBeUndefined()
+  expect(colour('ok')).toBe('#58A6FF')
+  expect(colour('warn')).toBe('#E3B341')
+  expect(colour('danger')).toBe('#FF7B72')
 })
