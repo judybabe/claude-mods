@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { cacheCell, shouldWarn } from '../hooks/cache'
-import { agoText, countdown, untilText } from '../hooks/time'
+import { agoText, atText, countdown, untilText } from '../hooks/time'
 
 const MIN = 60 * 1000
 const sent = 1_000_000
@@ -33,6 +33,11 @@ test('times in words', () => {
   expect(agoText(now - 12_000, now)).toBe('12 秒前')
   expect(agoText(now - 6 * MIN, now)).toBe('6 分鐘前')
   expect(agoText(now - 2 * 60 * MIN, now)).toBe('2 小時前')
+  const local = new Date(2026, 9, 22, 10, 0).getTime()
+  expect(atText(new Date(2026, 9, 22, 19, 0).toISOString(), local)).toBe('19:00')
+  expect(atText(new Date(2026, 9, 25, 14, 5).toISOString(), local)).toBe('10/25 14:05')
+  expect(atText(undefined, local)).toBeUndefined()
+  expect(atText('nope', local)).toBeUndefined()
   expect(countdown(22 * MIN)).toBe('22:00')
   expect(countdown(4 * MIN + 59_000)).toBe('04:59')
 })

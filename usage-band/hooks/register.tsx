@@ -5,15 +5,18 @@ import type { Reading, RefreshState } from '../types'
 import { cacheCell, shouldWarn } from './cache'
 import { PALETTE, bar, colour, level } from './gauge'
 import type { Level } from './gauge'
-import { HANDOFF_REQUEST, firstMessage, handoffPath, shouldOffer } from './handoff'
-import { bareId, modelOptions } from './model'
-import { agoText, untilText } from './time'
+import { HANDOFF_REQUEST, filesFromTranscript, firstMessage, handoffPath, isHandoffRequest, isSummary, shouldOffer, transcriptSlug, withFiles } from './handoff'
+import { bareId, columns, modelOptions, shouldLearn } from './model'
+import { agoText, atText } from './time'
+import { cells as widthOf, pickTier, shapeOf } from './layout'
+import type { Shape, Tier } from './layout'
 
 const reading = atom({ plugin: 'usage-band', key: 'reading' } as const, null)
 const lastSent = atom({ plugin: 'usage-band', key: 'lastSent' } as const, null)
 const warnedFor = atom({ plugin: 'usage-band', key: 'warnedFor' } as const, null)
 const now = atom({ plugin: 'usage-band', key: 'now' } as const, 0)
 const handoff = atom({ plugin: 'usage-band', key: 'handoff' } as const, null)
+const handoffTurn = atom({ plugin: 'usage-band', key: 'handoffTurn' } as const, null)
 const model = atom({ plugin: 'usage-band', key: 'model' } as const, null)
 const picker = atom({ plugin: 'usage-band', key: 'picker' } as const, false)
 const refreshedAt = atom({ plugin: 'usage-band', key: 'refreshedAt' } as const, null)
@@ -25,8 +28,6 @@ const STALE_MS = 5 * 60 * 1000
 const DONE_MS = 2000
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
 
-export const FULL_AT = 120
-export const NUMBERS_AT = 80
 
 function toReading(usage: SessionUsage): Reading {
   const fiveHour = usage.rateLimits.find(r => r.kind === 'five_hour')
@@ -44,12 +45,27 @@ async function currentModel($: EngineInterface): Promise<string | undefined> {
   return $.session.model().catch(() => undefined)
 }
 
+const LEARNED_KEY = 'learnedModels'
+
+async function learned($: EngineInterface): Promise<string[]> {
+  const kept = await $.store.get(LEARNED_KEY).catch(() => undefined)
+  return Array.isArray(kept) ? kept.filter((id): id is string => typeof id === 'string') : []
+}
+
+// a model the known list lacks is remembered across sessions the first time it is current
+async function learn($: EngineInterface, id: string | undefined): Promise<void> {
+  const kept = await learned($)
+  if (!shouldLearn(id, kept)) return
+  await $.store.set(LEARNED_KEY, [...kept, bareId(id!)]).catch(() => undefined)
+}
+
 // the figures and the model, read afresh from the engine; a failure keeps what was shown
 async function pull($: EngineInterface): Promise<boolean> {
   const usage = await $.session.usage().catch(() => undefined)
   if (usage !== undefined) await update($, reading, () => toReading(usage))
   const current = await currentModel($)
   if (current !== undefined) await update($, model, () => current)
+  await learn($, current)
   return usage !== undefined
 }
 
@@ -70,6 +86,30 @@ async function refresh($: EngineInterface): Promise<void> {
   })
 }
 
+// every file the session wrote: from its transcript, which outlives compaction; else from the messages in context
+async function sessionFiles($: EngineInterface): Promise<string[]> {
+  const home = ((await $.env.get('HOME')) ?? '').replace(/\/$/, '')
+  const id = await $.session.id().catch(() => undefined)
+  if (id !== undefined && home !== '') {
+    const dirs = [await $.session.root().catch(() => undefined), await $.session.cwd().catch(() => undefined)]
+    for (const dir of dirs) {
+      if (dir === undefined) continue
+      const path = `${home}/.claude/projects/${transcriptSlug(dir)}/${id}.jsonl`
+      const text = await $.fs.read(path).catch(() => undefined)
+      if (text !== undefined) return filesFromTranscript(text)
+    }
+  }
+  const messages = await $.session.messages().catch(() => [])
+  const seen = new Set<string>()
+  for (const m of Array.isArray(messages) ? messages : [])
+    for (const use of m.toolUses ?? []) {
+      if (!['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(use.tool)) continue
+      const path = use.input.file_path ?? use.input.notebook_path
+      if (typeof path === 'string') seen.add(path)
+    }
+  return [...seen]
+}
+
 const FILES_OPEN = { plugin: 'turn-files', key: 'open' } as const
 const FILES_SHOWN = { plugin: 'turn-files', key: 'shown' } as const
 
@@ -81,8 +121,6 @@ async function filesPane($: EngineInterface): Promise<{ isOpen: boolean; count: 
 
 const pct = (value: number | undefined): string => (value === undefined ? '—' : `${Math.round(value)}%`)
 
-type Tier = 'full' | 'numbers' | 'alerts'
-export const tierFor = (columns: number): Tier => (columns >= FULL_AT ? 'full' : columns >= NUMBERS_AT ? 'numbers' : 'alerts')
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -106,6 +144,14 @@ export const register: Register = on => {
     return result
   })
 
+  // only the turn the handoff request opened counts as the handoff
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined && isHandoffRequest(e.text) && (await read($, handoff)) === 'writing') {
+      await update($, handoffTurn, () => e.turnId)
+    }
+    return next(e)
+  })
+
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined) {
       const at = await $.clock.now()
@@ -121,16 +167,22 @@ export const register: Register = on => {
 
     await refresh($)
 
-    if ((await read($, handoff)) === 'writing') {
+    if ((await read($, handoff)) === 'writing' && e.turnId === (await read($, handoffTurn))) {
       await update($, handoff, () => null)
+      await update($, handoffTurn, () => null)
       if (e.reason !== 'answer' || e.answer.trim() === '') {
         $.ui.toast('交接摘要沒寫完，對話沒有清空', { timeoutMs: 10000 })
         return result
       }
+      if (!isSummary(e.answer)) {
+        $.ui.toast('這則回覆不像交接摘要（缺標題），沒有存檔也沒有清空', { timeoutMs: 10000 })
+        return result
+      }
       const home = (await $.env.get('HOME')) ?? '/tmp'
       const path = handoffPath(home, await $.session.cwd(), new Date(await $.clock.now()))
-      await $.fs.write(path, e.answer.trim() + '\n')
-      const opening = firstMessage(path, e.answer)
+      const content = withFiles(e.answer, await sessionFiles($))
+      await $.fs.write(path, content)
+      const opening = firstMessage(path, content)
       $.clock.after(0, async () => {
         await $.command.run({ command: 'clear' })
         await $.prompt.submit({ text: opening, asUser: true })
@@ -142,6 +194,7 @@ export const register: Register = on => {
   on('classic.PostModelSwitch', async ($, e, next) => {
     const result = await next(e)
     await update($, model, () => e.to_model)
+    await learn($, e.to_model)
     return result
   }).catch(($, e, next) => next(e))
 
@@ -158,80 +211,124 @@ export const register: Register = on => {
     const last = await read($, refreshedAt)
     const refreshing = await read($, refreshState)
     const isStale = last !== null && at - last > STALE_MS
-    const tier = tierFor(e.props.bodyColumns)
     const { Box, Button, Text } = $.ui.resolve(e)
 
-    const options = modelOptions(modelId)
+    const options = modelOptions(modelId, await learned($))
     const current = options.find(option => modelId !== undefined && option.value === bareId(modelId)) ?? { value: '', label: '—' }
     const others = options.filter(option => option !== current)
 
-    const dot = <Text color={PALETTE.muted}>  ·  </Text>
+    const DOT = '  ·  '
+    const dot = <Text color={PALETTE.muted}>{DOT}</Text>
+
+    const fiveHourAt = atText(figures.fiveHourResetsAt, at)
+    const isSpent = figures.fiveHour !== undefined && figures.fiveHour >= 100
+    const fiveHourText = fiveHourAt === undefined ? (isSpent ? '稍後恢復' : undefined) : `${fiveHourAt} ${isSpent ? '恢復' : '重置'}`
+    const sevenDayAt = atText(figures.sevenDayResetsAt, at)
+    const sevenDayText = sevenDayAt === undefined ? undefined : `${sevenDayAt} 重置`
+
+    type Quota = { key: string; label: string; short: string; value: number | undefined; note?: string; advice?: string }
+    const quotas: readonly Quota[] = [
+      { key: 'context', label: '上下文', short: '上下文', value: figures.context, advice: '建議 /compact' },
+      { key: 'five-hour', label: '5 小時', short: '5h', value: figures.fiveHour, note: fiveHourText },
+      { key: 'seven-day', label: '本週', short: '週', value: figures.sevenDay, note: sevenDayText },
+    ]
+    const isAlert = (value: number | undefined) => level(value) === 'warn' || level(value) === 'danger'
+    const shown = (shape: Shape) => quotas.filter(q => !shape.alertsOnly || isAlert(q.value))
+
+    // the plain words of each part, so a tier is chosen by the cells its row takes
+    const capsuleText = (shape: Shape) => ` ✳ ${current.label}${shape.alertsOnly ? '' : isOpen ? ' ▴' : ' ▾'} `
+    const labelText = (q: Quota, shape: Shape) => `${level(q.value) === 'danger' ? '⚠ ' : ''}${shape.longLabels ? q.label : q.short} `
+    const quotaText = (q: Quota, shape: Shape) =>
+      labelText(q, shape) +
+      (shape.showBars ? `${'█'.repeat(8)} ` : '') +
+      pct(q.value) +
+      (shape.showNotes && q.note ? ` · ${q.note}` : '') +
+      (shape.showAdvice && level(q.value) === 'danger' && q.advice ? ` · ${q.advice}` : '')
+    const handoffText = (shape: Shape) =>
+      !shape.showHandoff ? '' : handingOff ? ' · 交接中… 取消' : !shouldOffer(figures.context) ? '' : e.props.isWorking ? ' 交接（等 Claude 回完）' : ' [ 交接 ]'
+    const filesLabel = `檔案 ${files.isOpen ? '▾' : '▸'}${files.count > 0 ? ` ${files.count}` : ''}`
+    const refreshText = (shape: Shape) => {
+      if (refreshing === 'busy') return '⠋ 更新中'
+      if (refreshing === 'done') return '✓ 剛剛更新'
+      if (refreshing === 'failed') return '⚠ 更新失敗 · ↻ 重試'
+      return shape.showNotes && last !== null ? `↻ ${agoText(last, at)}` : '↻'
+    }
+    const tailText = (shape: Shape) =>
+      shape.alertsOnly
+        ? ''
+        : `${DOT}快取 ${cache.text}${cache.state === 'soon' && shape.showNotes ? ' 即將過期' : ''}${DOT}${refreshText(shape)}${DOT}${filesLabel}`
+    const rowWidth = (tier: Tier) => {
+      const shape = shapeOf(tier)
+      const parts = shown(shape).map(q => quotaText(q, shape))
+      return widthOf(capsuleText(shape) + '  ' + parts.join(DOT) + handoffText(shape) + tailText(shape))
+    }
+    const tier = pickTier(e.props.bodyColumns, rowWidth)
+    const shape = shapeOf(tier)
 
     // one quota: label, bar, figure; a danger adds ⚠ and a word of advice
-    const segment = (key: string, label: string, short: string, value: number | undefined, note?: string, advice?: string) => {
-      const state: Level = level(value)
-      if (tier === 'alerts' && state !== 'warn' && state !== 'danger') return null
+    const segment = (q: Quota) => {
+      const state: Level = level(q.value)
       const tone = colour(state)
-      const cells = bar(value)
+      const fill = bar(q.value)
       const isDanger = state === 'danger'
       return (
-        <Box key={key}>
-          <Text color={isDanger ? tone : PALETTE.muted}>{isDanger ? `⚠ ${tier === 'full' ? label : short}` : tier === 'full' ? label : short} </Text>
-          {tier === 'full' ? (
-            <Box>
-              <Text color={tone} dimColor={state === 'none'}>{cells.filled}</Text>
-              <Text color={PALETTE.capsule}>{cells.track}</Text>
+        <Box key={q.key} flexShrink={0}>
+          <Text wrap="truncate-end" color={isDanger ? tone : PALETTE.muted}>{labelText(q, shape)}</Text>
+          {shape.showBars ? (
+            <Box flexShrink={0}>
+              <Text color={tone} dimColor={state === 'none'}>{fill.filled}</Text>
+              <Text color={PALETTE.capsule}>{fill.track}</Text>
               <Text> </Text>
             </Box>
           ) : null}
-          <Text color={tone} bold dimColor={isStale || state === 'none'}>{pct(value)}</Text>
-          {tier === 'full' && note ? <Text color={PALETTE.muted}> · {note}</Text> : null}
-          {isDanger && advice ? <Text color={PALETTE.muted}> · {advice}</Text> : null}
+          <Text color={tone} bold dimColor={isStale || state === 'none'}>{pct(q.value)}</Text>
+          {shape.showNotes && q.note ? <Text color={PALETTE.muted}> · {q.note}</Text> : null}
+          {shape.showAdvice && isDanger && q.advice ? <Text color={PALETTE.muted}> · {q.advice}</Text> : null}
         </Box>
       )
     }
-
-    const fiveHourNote =
-      figures.fiveHour !== undefined && figures.fiveHour >= 100
-        ? `${untilText(figures.fiveHourResetsAt, at) ?? '稍後'} 後恢復`
-        : untilText(figures.fiveHourResetsAt, at)
-    const fiveHourText = fiveHourNote === undefined ? undefined : fiveHourNote.endsWith('後恢復') ? fiveHourNote : `${fiveHourNote} 後重置`
-    const sevenDayNote = untilText(figures.sevenDayResetsAt, at)
 
     const refreshFace = () => {
       if (refreshing === 'busy') return <Text color={PALETTE.muted}>{SPINNER[Math.floor(at / TICK_MS) % SPINNER.length]} 更新中</Text>
       if (refreshing === 'done') return <Text color={PALETTE.ok}>✓ 剛剛更新</Text>
       if (refreshing === 'failed') return <Text color={PALETTE.danger}>⚠ 更新失敗 · ↻ 重試</Text>
       const tone = isStale ? PALETTE.warn : PALETTE.muted
-      if (tier !== 'full' || last === null) return <Text color={tone}>↻</Text>
-      return <Text color={tone}>↻ {agoText(last, at)}</Text>
+      return <Text color={tone}>{refreshText(shape)}</Text>
     }
 
     // the menu takes rows of its own above the status row: the band grows upward, the prompt stays put
+    const pick = (value: string) => {
+      // the engine may keep the model: the capsule follows what it settled on
+      void (async () => {
+        await update($, picker, () => false)
+        await $.command.run({ command: 'model', args: value }).catch(() => undefined)
+        const settled = await currentModel($)
+        if (settled !== undefined) await update($, model, () => settled)
+      })()
+    }
+
+    // the menu takes rows of its own above the status row, one column per family: the band grows upward, the prompt stays put
     const menu = isOpen ? (
       <Box flexDirection="column" borderStyle="round" borderColor={PALETTE.muted} backgroundColor={PALETTE.capsule} paddingX={1} alignSelf="flex-start">
-        <Button key={`model:${current.value}`} plain onPress={() => void update($, picker, () => false)}>
-          <Text color={PALETTE.model}>❯ {current.label}</Text>
-          <Text color={PALETTE.muted}>  ✓ 目前</Text>
-        </Button>
-        {others.map(option => (
-          <Button
-            key={`model:${option.value}`}
-            plain
-            onPress={() => {
-              // the engine may keep the model: the capsule follows what it settled on
-              void (async () => {
-                await update($, picker, () => false)
-                await $.command.run({ command: 'model', args: option.value }).catch(() => undefined)
-                const settled = await currentModel($)
-                if (settled !== undefined) await update($, model, () => settled)
-              })()
-            }}
-          >
-            {`  ${option.label}`}
-          </Button>
-        ))}
-        <Text color={PALETTE.muted}>↑↓ 選擇 · Enter 確認 · 再點膠囊收合</Text>
+        <Box gap={3}>
+          {columns(options).map(group => (
+            <Box key={`family:${group.family}`} flexDirection="column" flexShrink={0}>
+              <Text color={PALETTE.muted}>{group.family}</Text>
+              {group.models.map(option =>
+                option === current ? (
+                  <Button key={`model:${option.value}`} plain onPress={() => void update($, picker, () => false)}>
+                    <Text color={PALETTE.model} bold>❯ {option.label} ✓</Text>
+                  </Button>
+                ) : (
+                  <Button key={`model:${option.value}`} plain onPress={() => pick(option.value)}>
+                    {`  ${option.label}`}
+                  </Button>
+                ),
+              )}
+            </Box>
+          ))}
+        </Box>
+        <Text color={PALETTE.muted}>點模型切換 · 再點膠囊收合 · ✓ 目前</Text>
       </Box>
     ) : null
 
@@ -240,36 +337,56 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {menu}
-        <Box>
+        <Box overflow="hidden">
           <Button key="model" plain onPress={() => void update($, picker, was => !was)}>
             <Text color={PALETTE.model} backgroundColor={PALETTE.capsule}>
-              {` ✳ ${current.label}${tier === 'alerts' ? '' : isOpen ? ' ▴' : ' ▾'} `}
+              {capsuleText(shape)}
             </Text>
           </Button>
           <Text>  </Text>
-          {segment('context', '上下文', '上下文', figures.context, undefined, '建議 /compact')}
-          {handingOff ? (
-            <Text color={PALETTE.warn}> · 交接中…</Text>
-          ) : shouldOffer(figures.context) ? (
-            <Box>
-              <Text> </Text>
-              <Button
-                key="handoff"
-                label="交接"
-                variant="primary"
-                onPress={async () => {
-                  await update($, handoff, () => 'writing')
-                  await $.prompt.submit({ text: HANDOFF_REQUEST, asUser: true })
-                }}
-              />
+          {shown(shape).map((q, i) => (
+            <Box key={`quota:${q.key}`} flexShrink={0}>
+              {i > 0 ? dot : null}
+              {segment(q)}
+              {q.key === 'context' && shape.showHandoff ? (
+                handingOff ? (
+                  <Box flexShrink={0}>
+                    <Text color={PALETTE.warn}> · 交接中… </Text>
+                    <Button
+                      key="handoff-cancel"
+                      plain
+                      label="取消"
+                      onPress={async () => {
+                        await update($, handoff, () => null)
+                        await update($, handoffTurn, () => null)
+                        $.ui.toast('交接已取消，對話不會被清空', { timeoutMs: 6000 })
+                      }}
+                    />
+                  </Box>
+                ) : shouldOffer(figures.context) ? (
+                  e.props.isWorking ? (
+                    <Text color={PALETTE.muted} dimColor> 交接（等 Claude 回完）</Text>
+                  ) : (
+                    <Box flexShrink={0}>
+                      <Text> </Text>
+                      <Button
+                        key="handoff"
+                        label="交接"
+                        variant="primary"
+                        onPress={async () => {
+                          await update($, handoffTurn, () => null)
+                          await update($, handoff, () => 'writing')
+                          await $.prompt.submit({ text: HANDOFF_REQUEST, asUser: true })
+                        }}
+                      />
+                    </Box>
+                  )
+                ) : null
+              ) : null}
             </Box>
-          ) : null}
-          {tier === 'alerts' && level(figures.fiveHour) !== 'warn' && level(figures.fiveHour) !== 'danger' ? null : dot}
-          {segment('five-hour', '5 小時', '5h', figures.fiveHour, fiveHourText)}
-          {tier === 'alerts' && level(figures.sevenDay) !== 'warn' && level(figures.sevenDay) !== 'danger' ? null : dot}
-          {segment('seven-day', '本週', '週', figures.sevenDay, sevenDayNote === undefined ? undefined : `${sevenDayNote} 後重置`)}
-          {tier === 'alerts' ? null : (
-            <Box>
+          ))}
+          {shape.alertsOnly ? null : (
+            <Box flexShrink={0}>
               {dot}
               <Text color={PALETTE.muted}>快取 </Text>
               <Text
@@ -279,7 +396,7 @@ export const register: Register = on => {
               >
                 {cache.text}
               </Text>
-              {cache.state === 'soon' && tier === 'full' ? <Text color={PALETTE.warn}> 即將過期</Text> : null}
+              {cache.state === 'soon' && shape.showNotes ? <Text color={PALETTE.warn}> 即將過期</Text> : null}
               {dot}
               <Button key="refresh" plain onPress={() => void refresh($)}>
                 {refreshFace()}
@@ -288,7 +405,7 @@ export const register: Register = on => {
               <Button
                 key="files"
                 plain
-                label={`檔案 ${files.isOpen ? '▾' : '▸'}${files.count > 0 ? ` ${files.count}` : ''}`}
+                label={filesLabel}
                 onPress={() => {
                   // not awaited: the toggle answers through turn-files' own state, and a press has a short budget
                   void $.command.run({ command: 'turn-files' })

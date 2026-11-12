@@ -16,6 +16,7 @@ declare module 'claude-code' {
       warnedFor: number | null
       now: number
       handoff: 'writing' | null
+      handoffTurn: string | null
       model: string | null
       picker: boolean
       refreshedAt: number | null

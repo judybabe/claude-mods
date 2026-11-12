@@ -1,4 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
+
+import { cells } from '../hooks/layout'
+import { atText } from '../hooks/time'
 import type { SessionUsage } from 'claude-code'
 
 const NOW = Date.parse('2026-10-22T10:00:00Z')
@@ -40,7 +43,7 @@ test('one row: capsule, three quotas with eighth-cell bars, cache, refresh and f
     expect(all).toContain('5 小時 ')
     expect(all).toContain('▉')
     expect(all).toContain('11%')
-    expect(all).toContain(' · 3h11m 後重置')
+    expect(all).toContain(` · ${atText(RESET, NOW)} 重置`)
     expect(all).toContain('本週 ')
     expect(all).toContain('██▊')
     expect(all).toContain('35%')
@@ -61,13 +64,13 @@ test('60 warns in amber, 85 is danger with ⚠ and advice, a spent quota says wh
   on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
   mock.clock(on, { now: NOW })
   await $.session.start({ cwd: '/home/u/p' } as never)
-  const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...band(160) })
+  const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...band(200) })
   const all = await texts(ui)
   expect(all).toContain('⚠ 上下文 ')
   expect((await ui.find({ type: 'Text', text: '93%' }))?.props.color).toBe('#FF7B72')
   expect(all).toContain(' · 建議 /compact')
   expect(all).toContain('⚠ 5 小時 ')
-  expect(all).toContain(' · 3h12m 後恢復')
+  expect(all).toContain(` · ${atText(RESET, NOW)} 恢復`)
   expect((await ui.find({ type: 'Text', text: '72%' }))?.props.color).toBe('#E3B341')
   expect(all).not.toContain('⚠ 本週 ')
   await ui.unmount()
@@ -84,7 +87,7 @@ test('off a subscription the quotas read as a dash, uncoloured', async ($, on) =
   await ui.unmount()
 })
 
-test('80 columns keeps the figures only; under 80 only the quotas that warn', async ($, on) => {
+test('a narrower row drops the bars, then everything but the quotas that warn', async ($, on) => {
   quiet(on)
   on('session.usage', () => ({ value: usage(93, 11, 35) }))
   on('session.model', () => ({ value: 'claude-fable-5-1' }) as never)
@@ -93,13 +96,13 @@ test('80 columns keeps the figures only; under 80 only the quotas that warn', as
   await $.session.start({ cwd: '/home/u/p' } as never)
   await clock.advance(2000)
 
-  const mid = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...band(100) })
+  const mid = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...band(110) })
   let all = await texts(mid)
   expect(all).toContain('⚠ 上下文 ')
   expect(all).toContain('5h ')
   expect(all).toContain('週 ')
   expect(all).not.toContain('██▌')
-  expect(all).not.toContain(' · 3h11m 後重置')
+  expect(all).not.toContain(` · ${atText(RESET, NOW)} 重置`)
   expect(all).toContain('↻')
   expect(all).not.toContain('↻ 0 秒前')
   expect(await mid.find({ key: 'files' })).toBeDefined()
@@ -153,11 +156,16 @@ test('the capsule opens a menu above it; a pick switches and closes; the engine 
 
   await ui.press({ key: 'model' })
   expect(await ui.find({ type: 'Text', text: ' ✳ Fable 5.1 ▴ ' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '❯ Fable 5.1' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '  ✓ 目前' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '↑↓ 選擇 · Enter 確認 · 再點膠囊收合' })).toBeDefined()
-  const rows = (await ui.findAll({ type: 'Button' })).filter(b => String(b.key).startsWith('model:')).map(b => String(b.key))
-  expect(rows).toEqual(['model:claude-fable-5-1', 'model:claude-opus-5-5', 'model:claude-haiku-5-5'])
+  expect(await ui.find({ type: 'Text', text: '❯ Fable 5.1 ✓' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '點模型切換 · 再點膠囊收合 · ✓ 目前' })).toBeDefined()
+  for (const family of ['Fable', 'Opus', 'Sonnet', 'Haiku']) expect(await ui.find({ type: 'Text', text: family })).toBeDefined()
+  const rows = (await ui.findAll({ type: 'Button' })).filter(b => String(b.key).startsWith('model:')).map(b => String(b.key).slice(6))
+  expect(rows).toEqual([
+    'claude-fable-5-2', 'claude-fable-5-1', 'claude-fable-5',
+    'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-5',
+    'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-sonnet-4-5',
+    'claude-haiku-5-5', 'claude-haiku-4-5',
+  ])
 
   await ui.press({ key: 'model' })
   expect(await ui.find({ key: 'model:claude-opus-5-5' })).toBeUndefined()
@@ -175,15 +183,40 @@ test('the capsule opens a menu above it; a pick switches and closes; the engine 
   await ui.unmount()
 })
 
-test('a model outside the family still heads the capsule and the menu', async ($, on) => {
+test('a model the list lacks heads the capsule, joins its family column, and is remembered for later sessions', async ($, on) => {
+  quiet(on)
+  mock.store(on)
+  on('session.usage', () => ({ value: usage(10, 10, 10) }))
+  let engineModel = 'claude-fable-5-3'
+  on('session.model', () => ({ value: engineModel }) as never)
+  on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
+  mock.clock(on, { now: NOW })
+  await $.session.start({ cwd: '/home/u/p' } as never)
+  const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...band(160) })
+  expect(await ui.find({ type: 'Text', text: ' ✳ Fable 5.3 ▾ ' })).toBeDefined()
+  await ui.press({ key: 'model' })
+  const fable = (await ui.findAll({ type: 'Button' })).filter(b => String(b.key).startsWith('model:claude-fable')).map(b => String(b.key).slice(6))
+  expect(fable).toEqual(['claude-fable-5-3', 'claude-fable-5-2', 'claude-fable-5-1', 'claude-fable-5'])
+  await ui.unmount()
+
+  // switched away, the learned model stays in the menu
+  engineModel = 'claude-haiku-5-5'
+  await $.session.start({ cwd: '/home/u/p' } as never)
+  const later = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...band(160) })
+  await later.press({ key: 'model' })
+  expect(await later.find({ key: 'model:claude-fable-5-3' })).toBeDefined()
+  await later.unmount()
+})
+
+test('a model of no known family gets a column of its own', async ($, on) => {
   quiet(on)
   on('session.usage', () => ({ value: usage(10, 10, 10) }))
   on('session.model', () => ({ value: 'glm53' }) as never)
   const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...band(160) })
   expect(await ui.find({ type: 'Text', text: ' ✳ glm53 ▾ ' })).toBeDefined()
   await ui.press({ key: 'model' })
-  const rows = (await ui.findAll({ type: 'Button' })).filter(b => String(b.key).startsWith('model:')).map(b => String(b.key))
-  expect(rows).toEqual(['model:glm53', 'model:claude-fable-5-1', 'model:claude-opus-5-5', 'model:claude-haiku-5-5'])
+  expect(await ui.find({ type: 'Text', text: '其他' })).toBeDefined()
+  expect(await ui.find({ key: 'model:glm53' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -228,4 +261,33 @@ test('↻ reads afresh: busy, then ✓ for two seconds, then how long ago; stale
   await clock.advance(6 * 60_000)
   expect((await ui.find({ type: 'Text', text: '70%' }))?.props.dimColor).toBe(true)
   await ui.unmount()
+})
+
+test('the row never takes more cells than the band has, at any width', async ($, on) => {
+  quiet(on)
+  on('session.model', () => ({ value: 'claude-fable-5-1' }) as never)
+  on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
+  on('state.get', ($, e) => {
+    const ref = e as { plugin?: string; key?: string }
+    if (ref.plugin === 'turn-files' && ref.key === 'shown') return { value: { value: [{ path: '/a' }, { path: '/b' }, { path: '/c' }] } } as never
+    return { value: {} } as never
+  })
+  let served = usage(37, 20, 3)
+  on('session.usage', () => ({ value: served }))
+  const clock = mock.clock(on, { now: NOW })
+  for (const figures of [usage(37, 20, 3), usage(93, 100, 72), usage(62, 88, 91)]) {
+    served = figures
+    await $.session.start({ cwd: '/home/u/p' } as never)
+    await clock.advance(60_000)
+    for (let columns = 60; columns <= 200; columns += 10) {
+      const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...band(columns) })
+      const words = (await texts(ui)).join('')
+      const labels = (await ui.findAll({ type: 'Button' }))
+        .filter(b => b.key === 'files' || b.key === 'handoff')
+        .map(b => (b.props.plain ? b.props.label : `[ ${b.props.label} ]`))
+        .join('')
+      expect(cells(words + labels)).toBeLessThanOrEqual(columns)
+      await ui.unmount()
+    }
+  }
 })

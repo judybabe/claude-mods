@@ -26,3 +26,14 @@ export function countdown(leftMs: number): string {
   const total = Math.max(0, Math.floor(leftMs / 1000))
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
 }
+
+// the moment in local time: "19:00" today, "10/25 14:00" on another day; nothing when unreadable
+export function atText(iso: string | undefined, now: number): string | undefined {
+  if (!iso) return undefined
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return undefined
+  const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+  const today = new Date(now)
+  const sameDay = at.getFullYear() === today.getFullYear() && at.getMonth() === today.getMonth() && at.getDate() === today.getDate()
+  return sameDay ? hhmm : `${at.getMonth() + 1}/${at.getDate()} ${hhmm}`
+}
