@@ -291,3 +291,40 @@ test('the row never takes more cells than the band has, at any width', async ($,
     }
   }
 })
+
+test('a press sends one tiny haiku request before reading; the minute tick sends none', async ($, on) => {
+  quiet(on)
+  const probes: { model: string; maxTokens?: number }[] = []
+  on('session.usage', () => ({ value: usage(10, 10, 10) }))
+  on('session.model', () => ({ value: 'claude-fable-5-2' }) as never)
+  on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
+  on('model.complete', ($, e) => { probes.push({ model: e.model, maxTokens: e.maxTokens }); return { value: { isAnswered: true, text: 'ok', usage: {} } } as never })
+  const clock = mock.clock(on, { now: NOW })
+  await $.session.start({ cwd: '/home/u/p' } as never)
+  await clock.advance(61_000)
+  expect(probes).toEqual([])
+  const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...band(160) })
+  await ui.press({ key: 'refresh' })
+  expect(probes).toEqual([{ model: 'haiku', maxTokens: 1 }])
+  await ui.unmount()
+})
+
+test('/clear drops the cache countdown until the next request', async ($, on) => {
+  quiet(on)
+  on('session.usage', () => ({ value: usage(10, 10, 10) }))
+  on('session.model', () => ({ value: 'claude-fable-5-2' }) as never)
+  on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
+  on('command.run', () => ({ value: { text: '' } }) as never)
+  on('turn.step', async function* ($, e) { return { turnId: (e as { turnId: string }).turnId, index: (e as { index: number }).index, answer: '', toolUses: [] } as never } as never)
+  const clock = mock.clock(on, { now: NOW })
+  await $.session.start({ cwd: '/home/u/p' } as never)
+  const ui = await $.ui.mount({ plugin: 'usage-band', surface: 'terminal', ...band(160) })
+  for await (const _ of $.turn.step({ turnId: 't1', index: 0, model: 'claude-fable-5-2' } as never) as AsyncIterable<unknown>) void _
+  await clock.advance(1000)
+  expect(await ui.find({ type: 'Text', text: '59:59' })).toBeDefined()
+  await $.command.run({ command: 'clear', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false } } as never)
+  await clock.advance(1000)
+  expect(await ui.find({ type: 'Text', text: '59:58' })).toBeUndefined()
+  expect((await texts(ui)).filter(t => t === '—').length).toBeGreaterThanOrEqual(1)
+  await ui.unmount()
+})

@@ -69,9 +69,15 @@ async function pull($: EngineInterface): Promise<boolean> {
   return usage !== undefined
 }
 
-async function refresh($: EngineInterface): Promise<void> {
+// the rate-limit figures come with an API response: a press sends one tiny request first, so they are read afresh
+async function probe($: EngineInterface): Promise<void> {
+  await $.model.complete({ model: 'haiku', prompt: 'ok', maxTokens: 1, effort: 'low', timeoutMs: 15000 }).catch(() => undefined)
+}
+
+async function refresh($: EngineInterface, isPressed = false): Promise<void> {
   if ((await read($, refreshState)) === 'busy') return
   await update($, refreshState, () => 'busy')
+  if (isPressed) await probe($)
   const ok = await pull($)
   if (!ok) {
     await update($, refreshState, () => 'failed')
@@ -195,8 +201,23 @@ export const register: Register = on => {
     const result = await next(e)
     await update($, model, () => e.to_model)
     await learn($, e.to_model)
+    // a new model starts its own cache
+    await update($, lastSent, () => null)
     return result
   }).catch(($, e, next) => next(e))
+
+  // /clear and compaction both rewrite the conversation's head: the cache it had is gone
+  on('command.run', { command: 'clear' }, async ($, e, next) => {
+    const result = await next(e)
+    await update($, lastSent, () => null)
+    return result
+  })
+
+  on('session.compact', async ($, e, next) => {
+    const result = await next(e)
+    await update($, lastSent, () => null)
+    return result
+  })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
@@ -398,7 +419,7 @@ export const register: Register = on => {
               </Text>
               {cache.state === 'soon' && shape.showNotes ? <Text color={PALETTE.warn}> 即將過期</Text> : null}
               {dot}
-              <Button key="refresh" plain onPress={() => void refresh($)}>
+              <Button key="refresh" plain onPress={() => void refresh($, true)}>
                 {refreshFace()}
               </Button>
               {dot}

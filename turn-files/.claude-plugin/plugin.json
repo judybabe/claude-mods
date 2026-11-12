@@ -1,6 +1,6 @@
 {
   "name": "turn-files",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lists the files the last turn wrote, each with its diff, why it was changed and a short summary of what changed.",
   "author": { "name": "Judy" },
   "types": "./types/index.d.ts"
