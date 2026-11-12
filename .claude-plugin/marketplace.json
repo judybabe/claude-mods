@@ -12,10 +12,6 @@
     {
       "name": "edit-guard",
       "source": "./edit-guard"
-    },
-    {
-      "name": "turn-files",
-      "source": "./turn-files"
     }
   ]
 }
